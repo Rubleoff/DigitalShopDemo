@@ -148,7 +148,7 @@ bot.on("photo", async (msg) => {
                 await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
             }
 
-            delete awaitingPhotoMailing[msg.from.id];
+            delete awaitingPhotoMailing[adminId];
         }
     }catch(err){
         console.error("Ошибка", err);
@@ -198,7 +198,7 @@ bot.on("message", async (msg) => {
 
             }
 
-            delete awaitingPhotoMailing[adminId];
+            delete awaitingTextMailing[adminId];
         }
     }catch(err){
         console.error("Ошибка", err);
