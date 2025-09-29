@@ -1,6 +1,8 @@
 require('dotenv').config();
 const {UserService}  = require('./database/userService');
 
+const {query, pool} = require('./database/connection.js');
+
 const TelegramApi = require('node-telegram-bot-api');
 
 const bot = new TelegramApi(process.env.BOT_TOKEN, {polling: true});
@@ -19,6 +21,36 @@ const logUserAction = async (userId) => {
     const logedUser = await UserService.createOrUpdateUser(userId);
 }
 
+bot.onText(/\/sql (.+)/, async (ctx, match) => {
+    const userId = ctx.message.from.id;
+    const sqlQuery = match[1];
+
+    // Защита: только вы можете использовать эту команду
+    if (!isAdmin(userId)) {
+        return ctx.reply('❌ Запрещено!');
+    }
+
+    try {
+        console.log(`[SQL] ${userId}: ${sqlQuery}`);
+        const result = await pool.query(sqlQuery);
+
+        let response;
+        if (result.rows && result.rows.length > 0) {
+            // Ограничиваем вывод, чтобы не упасть в Telegram
+            const limitedRows = result.rows.slice(0, 10);
+            response = '✅ Результат:\n<pre>' +
+                JSON.stringify(limitedRows, null, 2).substring(0, 3000) +
+                '</pre>';
+        } else {
+            response = `✅ Выполнено. Затронуто строк: ${result.rowCount || 0}`;
+        }
+
+        await ctx.reply(response, { parse_mode: 'HTML' });
+    } catch (err) {
+        console.error('SQL error:', err);
+        await ctx.reply(`❌ Ошибка:\n<pre>${err.message}</pre>`, { parse_mode: 'HTML' });
+    }
+});
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
