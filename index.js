@@ -24,6 +24,7 @@ const logUserAction = async (userId) => {
 bot.onText(/\/sql (.+)/, async (ctx, match) => {
     const userId = ctx.from.id;
     const sqlQuery = match[1];
+    const chatId = ctx.chat.id;
 
     // Защита: только вы можете использовать эту команду
     if (!isAdmin(userId)) {
@@ -45,21 +46,22 @@ bot.onText(/\/sql (.+)/, async (ctx, match) => {
             response = `✅ Выполнено. Затронуто строк: ${result.rowCount || 0}`;
         }
 
-        await ctx.reply(response, { parse_mode: 'HTML' });
+        await bot.sendMessage(chatId, response, { parse_mode: 'HTML' });
     } catch (err) {
         console.error('SQL error:', err);
-        await ctx.reply(`❌ Ошибка:\n<pre>${err.message}</pre>`, { parse_mode: 'HTML' });
+        await bot.sendMessage(chatId, `❌ Ошибка:\n<pre>${err.message}</pre>`, { parse_mode: 'HTML' });
     }
 });
+
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     const userId = msg.from.id;
     console.log(msg);
-
+    logUserAction(msg.from);
     try {
         if(!isAdmin(userId)){
-            logUserAction(msg.from);
+
             await bot.sendMessage(chatId, '👋 Добро пожаловать!', {
                 reply_markup:{
                     inline_keyboard:[
@@ -152,7 +154,6 @@ bot.on("photo", async (msg) => {
         console.error("Ошибка", err);
         await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
     }
-
 })
 
 bot.on("message", async (msg) => {
@@ -190,14 +191,14 @@ bot.on("message", async (msg) => {
                     }
                 }
 
-                await bot.sendMessage(chatId, `✅ Фото-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`);
+                await bot.sendMessage(chatId, `✅ Текст-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`);
             }catch(err){
                 console.error("Ошибка", err);
                 await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
 
             }
 
-            delete awaitingPhotoMailing[msg.from.id];
+            delete awaitingPhotoMailing[adminId];
         }
     }catch(err){
         console.error("Ошибка", err);

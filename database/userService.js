@@ -1,8 +1,20 @@
-const { query } = require('./connection');
+const { query, pool } = require('./connection');
 
 class UserService {
-
+    static async unsleepQuery(){
+        try {
+            const result = await pool.query(`SELECT 1;`);
+            console.log(`✅ Запрос для просыпания`);
+        } catch (error) {
+            if (error.code === '23505') { // unique constraint violation
+                console.log(`⚠️ Ошибка`);
+                return;
+            }
+            throw error;
+        }
+    }
     static async createUser(telegramUser) {
+        UserService.unsleepQuery();
         const sql = `
             INSERT INTO users (telegram_id, username, first_name, last_name, language_code)
             VALUES ($1, $2, $3, $4, $5)
@@ -31,6 +43,7 @@ class UserService {
     }
 
     static async updateUser(telegramUser) {
+        UserService.unsleepQuery();
         const sql = `
             UPDATE users 
             SET username = $2, 
@@ -67,6 +80,7 @@ class UserService {
     }
 
     static async createOrUpdateUser(telegramUser) {
+        UserService.unsleepQuery();
         console.log(`🔄 Обработка пользователя: ${telegramUser.id} (@${telegramUser.username || 'без username'})`);
 
         // Сначала пытаемся найти пользователя
@@ -80,6 +94,7 @@ class UserService {
     }
 
     static async getUserByTelegramId(telegramId) {
+        UserService.unsleepQuery();
         const sql = 'SELECT * FROM users WHERE telegram_id = $1';
 
         try {
@@ -92,6 +107,7 @@ class UserService {
     }
 
     static async getActiveUsers() {
+        UserService.unsleepQuery();
         const sql = `
             SELECT telegram_id, username, first_name, last_name
             FROM users
@@ -109,6 +125,7 @@ class UserService {
     }
 
     static async getUserStats() {
+        UserService.unsleepQuery();
         const sql = `
             SELECT 
                 COUNT(*) as total,
