@@ -1,4 +1,6 @@
 require('dotenv').config();
+const {UserService}  = require('./database/userService');
+
 const TelegramApi = require('node-telegram-bot-api');
 
 const bot = new TelegramApi(process.env.BOT_TOKEN, {polling: true});
@@ -9,20 +11,22 @@ const webAppUrlAdmin = process.env.WEB_APP_URL_ADMIN;
 const ADMIN_IDS = process.env.ADMIN_IDS.split(',').map(id => parseInt(id, 10));
 
 const isAdmin = (userId) => ADMIN_IDS.includes(userId);
-
 const awaitingPhotoMailing = {};
 const awaitingTextMailing = {};
 
-const logUserAction = (userId, username, action) => {
+const logUserAction = async (userId) => {
     const timestamp = new Date().toISOString();
-    console.log(`UserID: ${userId}\n UserName: ${username || 'unknown'}\n Action: ${action}\n Time: ${timestamp}`);
+    const logedUser = await UserService.createOrUpdateUser(userId);
 }
 
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     const userId = msg.from.id;
+    console.log(msg);
+
     try {
+        logUserAction(msg.from);
         if(!isAdmin(userId)){
             await bot.sendMessage(chatId, '👋 Добро пожаловать!', {
                 reply_markup:{
@@ -41,7 +45,8 @@ bot.onText(/\/start/, async (msg) => {
                         [
                             {text: '🛍️ Магазин', web_app: {url: webAppUrl}},
                             {text: '⚙️ Админ панель', web_app: {url: webAppUrlAdmin}},
-                            {text: '⚙️ Сделать рассылку', callback_data: 'admin_mailing'}
+                            {text: '⚙️ Сделать рассылку', callback_data: 'admin_mailing'},
+                            {text: '📊 Cтатистика (demo)', callback_data: 'admin_get_stats'},
                         ]
                     ]
                 }
@@ -49,45 +54,121 @@ bot.onText(/\/start/, async (msg) => {
         }
     }catch(err){
         console.error("Ошибка", err);
-        await bot.sendMessage(chaId, '⚠️ Произошла ошибка. Попробуйте позже.');
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
     }
 
 })
 
-bot.on("photo", async (msg) => {
-    if(!isAdmin(msg.from.id)) return;
-
-    const chatId = msg.chat.id;
-    console.log(msg.from.id);
-    if(awaitingPhotoMailing[msg.from.id]){
-
-        if(!msg.photo){
-            await bot.sendMessage(chatId, '⚠️ Фото не найдено');
-            return;
-        }
-
-        // waiting for database
-
-        delete awaitingPhotoMailing[msg.from.id];
-        await bot.sendMessage(chatId, '✅ Рассылка успешно отправлена');
+const sendPhotoWithText = async (userId, photoPath, caption) => {
+    try {
+        await bot.sendPhoto(userId, photoPath, {
+            caption: caption,
+            parse_mode: 'HTML' // или 'Markdown'
+        });
+    } catch (error) {
+        console.error('❌ Ошибка отправки фото:', error);
     }
+};
+
+bot.on("photo", async (msg) => {
+    const chatId = msg.chat.id;
+    const adminId = msg.from.id;
+
+    try {
+        if(!isAdmin(adminId)) return;
+
+        if(awaitingPhotoMailing[adminId]){
+
+            const bestPhoto = msg.photo[msg.photo.length - 1];
+            const caption = msg.caption;
+
+            await bot.sendMessage(chatId, '📤 Начинаю фото-рассылку');
+
+            try {
+
+                const users = await UserService.getActiveUsers();
+                let sent = 0;
+                let failed = 0;
+
+                for (const user of users) {
+
+                    if (ADMIN_IDS.includes(Number(user.telegram_id))) continue;
+
+                    try {
+                        await sendPhotoWithText(user.telegram_id, bestPhoto.file_id, caption);
+                        sent++;
+
+                        // Задержка чтобы не превысить лимиты API
+                        await new Promise(resolve => setTimeout(resolve, 100));
+
+                    } catch (error) {
+                        failed++;
+                        console.error(`❌ Ошибка отправки пользователю ${user.telegram_id}:`, error.message);
+                    }
+                }
+
+                await bot.sendMessage(chatId, `✅ Фото-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`);
+            }catch(err){
+                console.error("Ошибка", err);
+                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+            }
+
+            delete awaitingPhotoMailing[msg.from.id];
+        }
+    }catch(err){
+        console.error("Ошибка", err);
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+    }
+
 })
 
 bot.on("message", async (msg) => {
-    if(!isAdmin(msg.from.id)) return;
-
     const chatId = msg.chat.id;
+    const adminId = msg.from.id;
+    try{
+        if(!isAdmin(adminId)) return;
 
-    if(awaitingTextMailing[msg.from.id]){
-        if(!msg.text){
-            await bot.sendMessage(chatId, '⚠️ Текст не найден');
-            return;
+        if(awaitingTextMailing[adminId]){
 
+            const caption = msg.text;
+
+            await bot.sendMessage(chatId, '📤 Начинаю рассылку');
+
+            try {
+
+                const users = await UserService.getActiveUsers();
+                let sent = 0;
+                let failed = 0;
+
+                for (const user of users) {
+
+                    if (ADMIN_IDS.includes(Number(user.telegram_id))) continue;
+
+                    try {
+                        await bot.sendMessage(user.telegram_id, msg.text);
+                        sent++;
+
+                        // Задержка чтобы не превысить лимиты API
+                        await new Promise(resolve => setTimeout(resolve, 100));
+
+                    } catch (error) {
+                        failed++;
+                        console.error(`❌ Ошибка отправки пользователю ${user.telegram_id}:`, error.message);
+                    }
+                }
+
+                await bot.sendMessage(chatId, `✅ Фото-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`);
+            }catch(err){
+                console.error("Ошибка", err);
+                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+
+            }
+
+            delete awaitingPhotoMailing[msg.from.id];
         }
-
-        // waiting for database
-        delete awaitingTextMailing[msg.from.id];
-        await bot.sendMessage(chatId, '✅ Рассылка успешно отправлена');
+    }catch(err){
+        console.error("Ошибка", err);
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
     }
 })
 
@@ -97,30 +178,49 @@ bot.on("callback_query", async (query) => {
     const username = query.from.username;
 
     if(!isAdmin(userId)){
-        await bot.answerCallbackQuery(query.id, "Нет доступа");
-        logUserAction(userId, username, 'Попытка несанкционированного доступа к callback_query');
+        await bot.answerCallbackQuery(query.id, "❌ Нет доступа", true);
         return;
     }
-    if(query.data === 'admin_mailing'){
-        await bot.sendMessage(chatId, 'Выберете вид рассылки', {
-            reply_markup:{
-                inline_keyboard:[
-                    [
-                        {text: 'текст + фото',callback_data: 'admin_mailing_photo'},
-                        {text: 'текст', callback_data: 'admin_mailing_text'},
-                    ]
-                ]
-            }
-        });
-    }
-    if(query.data === 'admin_mailing_photo'){
-        awaitingPhotoMailing[query.from.id] = true;
-        await bot.sendMessage(chatId, 'Введите сообщение');
-    }
-    if(query.data === 'admin_mailing_text'){
-        awaitingTextMailing[query.from.id] = true;
-        await bot.sendMessage(chatId, 'Введите сообщение');
-    }
-    await bot.answerCallbackQuery(query.id)
 
+    try{
+        if(query.data === 'admin_mailing'){
+
+            await bot.sendMessage(chatId, '✅ Выберите тип рассылки', {
+                reply_markup:{
+                    inline_keyboard:[
+                        [
+                            {text: '📸 Текст + фото', callback_data: 'admin_mailing_photo'},
+                            {text: '📝 Только текст', callback_data: 'admin_mailing_text'},
+                        ]
+                    ]
+                }
+            });
+        }
+        else if(query.data === 'admin_mailing_photo'){
+
+            awaitingPhotoMailing[query.from.id] = true;
+            await bot.sendMessage(chatId, 'Введите сообщение');
+        }
+        else if(query.data === 'admin_mailing_text'){
+
+            awaitingTextMailing[query.from.id] = true;
+            await bot.sendMessage(chatId, 'Введите сообщение');
+        }
+        else if(query.data === 'admin_get_stats'){
+
+            const userStats = await UserService.getUserStats();
+            const statsText = `📊 Статистика пользователей:    
+            👥 Всего: ${userStats.total}
+            ✅ Активных: ${userStats.active}  
+            🚫 Заблокированных: ${userStats.blocked}
+            🆕 Новых сегодня: ${userStats.todayNew}`;
+
+            await bot.sendMessage(chatId, statsText);
+        }
+    }catch(err){
+        console.error("Ошибка", err);
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+    }
+
+    await bot.answerCallbackQuery(query.id, '✅ Готово');
 })
