@@ -22,7 +22,7 @@ const logUserAction = async (userId) => {
 }
 
 bot.onText(/\/sql (.+)/, async (ctx, match) => {
-    const userId = ctx.message.from.id;
+    const userId = ctx.from.id;
     const sqlQuery = match[1];
 
     // Защита: только вы можете использовать эту команду
