@@ -58,8 +58,8 @@ bot.onText(/\/start/, async (msg) => {
     console.log(msg);
 
     try {
-        logUserAction(msg.from);
         if(!isAdmin(userId)){
+            logUserAction(msg.from);
             await bot.sendMessage(chatId, '👋 Добро пожаловать!', {
                 reply_markup:{
                     inline_keyboard:[
@@ -71,6 +71,7 @@ bot.onText(/\/start/, async (msg) => {
             });
         }
         else {
+
             await bot.sendMessage(chatId, '👋 Добро пожаловать, господин Админ!', {
                 reply_markup:{
                     inline_keyboard:[
