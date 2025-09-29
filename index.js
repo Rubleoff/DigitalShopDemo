@@ -58,7 +58,7 @@ bot.on("photo", async (msg) => {
     if(!isAdmin(msg.from.id)) return;
 
     const chatId = msg.chat.id;
-    console.log(msg.from.id);
+
     if(awaitingPhotoMailing[msg.from.id]){
 
         if(!msg.photo){
