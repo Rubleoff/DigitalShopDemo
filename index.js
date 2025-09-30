@@ -5,7 +5,29 @@ const {query, pool} = require('./database/connection.js');
 
 const TelegramApi = require('node-telegram-bot-api');
 
-const bot = new TelegramApi(process.env.BOT_TOKEN, {polling: true});
+const bot = new TelegramApi(process.env.BOT_TOKEN);
+
+const express = require('express');
+
+const app = express();
+app.use(express.json());
+
+// Webhook endpoint
+app.post('/webhook', (req, res) => {
+    bot.processUpdate(req.body);
+    res.sendStatus(200);
+});
+
+// Главное: слушаем PORT от Render!
+const PORT = process.env.PORT;
+app.listen(PORT, async () => {
+    console.log(`✅ Сервер запущен на порту ${PORT}`);
+
+    // Устанавливаем webhook
+    const webhookUrl = `https://${process.env.RENDER_EXTERNAL_URL}/webhook`;
+    await bot.setWebHook(webhookUrl);
+    console.log(`🔗 Webhook установлен на: ${webhookUrl}`);
+});
 
 const webAppUrl = process.env.WEB_APP_URL;
 const webAppUrlAdmin = process.env.WEB_APP_URL_ADMIN;
