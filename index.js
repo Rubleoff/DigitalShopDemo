@@ -11,6 +11,7 @@ const express = require('express');
 
 const app = express();
 app.use(express.json());
+console.log(`https://${process.env.WEBHOOK_URL}/webhook`);
 
 // Webhook endpoint
 app.post('/webhook', (req, res) => {
@@ -18,13 +19,13 @@ app.post('/webhook', (req, res) => {
     res.sendStatus(200);
 });
 
-// Главное: слушаем PORT от Render!
 const PORT = process.env.PORT;
 app.listen(PORT, async () => {
     console.log(`✅ Сервер запущен на порту ${PORT}`);
 
     // Устанавливаем webhook
-    const webhookUrl = `https://${process.env.RENDER_EXTERNAL_URL}/webhook`;
+    const webhookUrl = `https://${process.env.WEBHOOK_URL}/webhook`;
+
     await bot.setWebHook(webhookUrl);
     console.log(`🔗 Webhook установлен на: ${webhookUrl}`);
 });
