@@ -10,8 +10,6 @@ const pool = new Pool({
     connectionTimeoutMillis: 2000,
 });
 
-module.exports = pool;
-
 pool.on('connect', () => {
     console.log('✅ Подключение к PostgreSQL установлено');
 });

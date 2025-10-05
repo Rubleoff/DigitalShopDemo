@@ -18,13 +18,13 @@ app.post('/webhook', (req, res) => {
     res.sendStatus(200);
 });
 
-// Главное: слушаем PORT от Render!
 const PORT = process.env.PORT;
 app.listen(PORT, async () => {
     console.log(`✅ Сервер запущен на порту ${PORT}`);
 
     // Устанавливаем webhook
-    const webhookUrl = `https://${process.env.RENDER_EXTERNAL_URL}/webhook`;
+    const webhookUrl = `https://${process.env.WEBHOOK_URL}/webhook`;
+
     await bot.setWebHook(webhookUrl);
     console.log(`🔗 Webhook установлен на: ${webhookUrl}`);
 });
@@ -41,6 +41,33 @@ const awaitingTextMailing = {};
 const logUserAction = async (userId) => {
     const timestamp = new Date().toISOString();
     const logedUser = await UserService.createOrUpdateUser(userId);
+}
+
+async function showMainMenu(chatId, isAdmin) {
+    if (!isAdmin) {
+        await bot.sendMessage(chatId, '👋 Добро пожаловать!', {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '🛍️ Открыть магазин', web_app: { url: webAppUrl } },
+                    ]
+                ]
+            }
+        });
+    } else {
+        await bot.sendMessage(chatId, '👋 Добро пожаловать, господин Админ!', {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '🛍️ Магазин', web_app: { url: webAppUrl } },
+                        { text: '⚙️ Админ панель', web_app: { url: webAppUrlAdmin } },
+                        { text: '⚙️ Сделать рассылку', callback_data: 'admin_mailing' },
+                        { text: '📊 Статистика (demo)', callback_data: 'admin_get_stats' },
+                    ]
+                ]
+            }
+        });
+    }
 }
 
 bot.onText(/\/sql (.+)/, async (ctx, match) => {
@@ -130,7 +157,7 @@ const sendPhotoWithText = async (userId, photoPath, caption) => {
 bot.on("photo", async (msg) => {
     const chatId = msg.chat.id;
     const adminId = msg.from.id;
-
+    const massageId = msg.message_id;
     try {
         if(!isAdmin(adminId)) return;
 
@@ -163,11 +190,26 @@ bot.on("photo", async (msg) => {
                         console.error(`❌ Ошибка отправки пользователю ${user.telegram_id}:`, error.message);
                     }
                 }
-
-                await bot.sendMessage(chatId, `✅ Фото-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`);
+                await bot.sendMessage(chatId, `✅ Фото-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`,{
+                    reply_markup:{
+                        inline_keyboard:[
+                            [
+                                { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                            ]
+                        ]
+                    }
+                });
             }catch(err){
                 console.error("Ошибка", err);
-                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.', {
+                    reply_markup:{
+                        inline_keyboard:[
+                            [
+                                { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                            ]
+                        ]
+                    }
+                });
             }
 
             delete awaitingPhotoMailing[adminId];
@@ -181,6 +223,7 @@ bot.on("photo", async (msg) => {
 bot.on("message", async (msg) => {
     const chatId = msg.chat.id;
     const adminId = msg.from.id;
+    const massageId = msg.message_id;
     try{
         if(!isAdmin(adminId)) return;
 
@@ -212,11 +255,26 @@ bot.on("message", async (msg) => {
                         console.error(`❌ Ошибка отправки пользователю ${user.telegram_id}:`, error.message);
                     }
                 }
-
-                await bot.sendMessage(chatId, `✅ Текст-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`);
+                await bot.sendMessage(chatId, `✅ Текст-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`,{
+                    reply_markup:{
+                        inline_keyboard:[
+                            [
+                                { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                            ]
+                        ]
+                    }
+                });
             }catch(err){
                 console.error("Ошибка", err);
-                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',{
+                    reply_markup:{
+                        inline_keyboard:[
+                            [
+                                { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                            ]
+                        ]
+                    }
+                });
 
             }
 
@@ -224,12 +282,21 @@ bot.on("message", async (msg) => {
         }
     }catch(err){
         console.error("Ошибка", err);
-        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',{
+            reply_markup:{
+                inline_keyboard:[
+                    [
+                        { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                    ]
+                ]
+            }
+        });
     }
 })
 
 bot.on("callback_query", async (query) => {
     const chatId = query.message.chat.id;
+    const massageId = query.message.message_id;
     const userId = query.from.id;
     const username = query.from.username;
 
@@ -239,31 +306,44 @@ bot.on("callback_query", async (query) => {
     }
 
     try{
-        if(query.data === 'admin_mailing'){
+        if (query.data === 'main_menu') {
+            if(!isAdmin(userId)) {
+                delete awaitingPhotoMailing[userId];
+                delete awaitingTextMailing[userId];
+            }
 
+            await bot.deleteMessage(chatId, massageId);
+            await showMainMenu(chatId, isAdmin(userId));
+            await bot.answerCallbackQuery(query.id);
+        }
+        else if(query.data === 'admin_mailing'){
+            await bot.deleteMessage(chatId, massageId);
             await bot.sendMessage(chatId, '✅ Выберите тип рассылки', {
                 reply_markup:{
                     inline_keyboard:[
                         [
                             {text: '📸 Текст + фото', callback_data: 'admin_mailing_photo'},
                             {text: '📝 Только текст', callback_data: 'admin_mailing_text'},
+                        ],
+                        [
+                        { text: '🏠 Главное меню', callback_data: 'main_menu' }
                         ]
                     ]
                 }
             });
         }
         else if(query.data === 'admin_mailing_photo'){
-
+            await bot.deleteMessage(chatId, massageId);
             awaitingPhotoMailing[query.from.id] = true;
             await bot.sendMessage(chatId, 'Введите сообщение');
         }
         else if(query.data === 'admin_mailing_text'){
-
+            await bot.deleteMessage(chatId, massageId);
             awaitingTextMailing[query.from.id] = true;
             await bot.sendMessage(chatId, 'Введите сообщение');
         }
         else if(query.data === 'admin_get_stats'){
-
+            await bot.deleteMessage(chatId, massageId);
             const userStats = await UserService.getUserStats();
             const statsText = `📊 Статистика пользователей:    
             👥 Всего: ${userStats.total}
@@ -271,11 +351,27 @@ bot.on("callback_query", async (query) => {
             🚫 Заблокированных: ${userStats.blocked}
             🆕 Новых сегодня: ${userStats.todayNew}`;
 
-            await bot.sendMessage(chatId, statsText);
+            await bot.sendMessage(chatId, statsText,{
+                reply_markup:{
+                    inline_keyboard:[
+                        [
+                        { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                        ]
+                    ]
+                }
+            });
         }
     }catch(err){
         console.error("Ошибка", err);
-        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',{
+            reply_markup:{
+                inline_keyboard:[
+                    [
+                        { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                    ]
+                ]
+            }
+        });
     }
 
     await bot.answerCallbackQuery(query.id, '✅ Готово');
