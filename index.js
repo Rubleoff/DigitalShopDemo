@@ -1,5 +1,11 @@
 require('dotenv').config();
+
+const cors = require('cors');
+const crypto = require('crypto');
+
+
 const {UserService}  = require('./database/userService');
+const {AppService}  = require('./database/appService');
 
 const {query, pool} = require('./database/connection.js');
 
@@ -12,11 +18,95 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
+
 // Webhook endpoint
 app.post('/webhook', (req, res) => {
     bot.processUpdate(req.body);
     res.sendStatus(200);
 });
+
+app.use(cors({
+    origin: 'https://firstapp-xodb.onrender.com',
+    methods: ['POST', 'GET', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+function validateInitData(initData, botToken) {
+    const params = new URLSearchParams(initData);
+    const hash = params.get('hash');
+    if (!hash) return false;
+    params.delete('hash');
+
+    const dataCheckString = [...params.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\n');
+
+    const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+    const calc = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+    const ok = calc === hash;
+    const authDate = Number(params.get('auth_date') || 0);
+    const fresh = authDate && (Date.now() / 1000 - authDate) < 86400;
+    return ok && fresh;
+}
+
+function parseInitData(initData) {
+    const p = new URLSearchParams(initData);
+    const readJSON = (k) => {
+        const v = p.get(k);
+        if (!v) return undefined;
+        try { return JSON.parse(v); } catch { return undefined; }
+    };
+    return {
+        user: readJSON('user'),
+        chat: readJSON('chat')
+    };
+}
+
+app.post('/api/submit', async (req, res) => {
+    try {
+        const { payload, initData } = req.body || {};
+        if (typeof initData !== 'string') {
+            return res.status(400).json({ error: 'initData must be string' });
+        }
+        if (!validateInitData(initData, process.env.BOT_TOKEN)) {
+            return res.status(403).json({ error: 'Invalid initData' });
+        }
+
+        const { user, chat } = parseInitData(initData);
+        const chatId = chat?.id ?? user?.id;
+        if (!chatId) return res.status(400).json({ error: 'chat_id not found' });
+
+        if(payload.type === "addCategory"){
+            const result = await AppService.addCategory(payload.category);
+        }
+        if(payload.type === "addProduct"){
+            await AppService.addProduct(payload.product);
+        }
+        if(payload.type === "removeProduct"){
+            await AppService.removeProduct(payload.id);
+        }
+        if(payload.type === "removeCategory"){
+            await AppService.removeCategory(payload.id);
+        }
+
+        return res.json({ ok: true, message: 'Данные приняты' });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+const homeButton = {
+    reply_markup:{
+        inline_keyboard:[
+            [
+                { text: '🏠 Главное меню', callback_data: 'main_menu' }
+            ]
+        ]
+    }
+};
 
 const PORT = process.env.PORT;
 app.listen(PORT, async () => {
@@ -31,6 +121,7 @@ app.listen(PORT, async () => {
 
 const webAppUrl = process.env.WEB_APP_URL;
 const webAppUrlAdmin = process.env.WEB_APP_URL_ADMIN;
+
 
 const ADMIN_IDS = process.env.ADMIN_IDS.split(',').map(id => parseInt(id, 10));
 
@@ -95,10 +186,28 @@ bot.onText(/\/sql (.+)/, async (ctx, match) => {
             response = `✅ Выполнено. Затронуто строк: ${result.rowCount || 0}`;
         }
 
-        await bot.sendMessage(chatId, response, { parse_mode: 'HTML' });
+        await bot.sendMessage(chatId, response, {
+            parse_mode: 'HTML',
+            reply_markup:{
+                inline_keyboard:[
+                    [
+                        { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                    ]
+                ]
+            }
+        });
     } catch (err) {
         console.error('SQL error:', err);
-        await bot.sendMessage(chatId, `❌ Ошибка:\n<pre>${err.message}</pre>`, { parse_mode: 'HTML' });
+        await bot.sendMessage(chatId, `❌ Ошибка:\n<pre>${err.message}</pre>`,{
+            parse_mode: 'HTML',
+            reply_markup:{
+                inline_keyboard:[
+                    [
+                        { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                    ]
+                ]
+            }
+        });
     }
 });
 
@@ -107,7 +216,7 @@ bot.onText(/\/start/, async (msg) => {
     const text = msg.text;
     const userId = msg.from.id;
     console.log(msg);
-    logUserAction(msg.from);
+    await logUserAction(msg.from);
     try {
         if(!isAdmin(userId)){
 
@@ -138,7 +247,7 @@ bot.onText(/\/start/, async (msg) => {
         }
     }catch(err){
         console.error("Ошибка", err);
-        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',homeButton);
     }
 
 })
@@ -158,6 +267,7 @@ bot.on("photo", async (msg) => {
     const chatId = msg.chat.id;
     const adminId = msg.from.id;
     const massageId = msg.message_id;
+
     try {
         if(!isAdmin(adminId)) return;
 
@@ -190,40 +300,27 @@ bot.on("photo", async (msg) => {
                         console.error(`❌ Ошибка отправки пользователю ${user.telegram_id}:`, error.message);
                     }
                 }
-                await bot.sendMessage(chatId, `✅ Фото-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`,{
-                    reply_markup:{
-                        inline_keyboard:[
-                            [
-                                { text: '🏠 Главное меню', callback_data: 'main_menu' }
-                            ]
-                        ]
-                    }
-                });
+
+                await bot.sendMessage(chatId, `✅ Фото-рассылка завершена!\n📤 Отправлено: ${sent}\n❌ Ошибок: ${failed}`,homeButton);
             }catch(err){
                 console.error("Ошибка", err);
-                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.', {
-                    reply_markup:{
-                        inline_keyboard:[
-                            [
-                                { text: '🏠 Главное меню', callback_data: 'main_menu' }
-                            ]
-                        ]
-                    }
-                });
+                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.', homeButton);
             }
 
             delete awaitingPhotoMailing[adminId];
         }
     }catch(err){
         console.error("Ошибка", err);
-        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.');
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.', homeButton);
     }
 })
 
 bot.on("message", async (msg) => {
+
     const chatId = msg.chat.id;
     const adminId = msg.from.id;
     const massageId = msg.message_id;
+
     try{
         if(!isAdmin(adminId)) return;
 
@@ -266,15 +363,7 @@ bot.on("message", async (msg) => {
                 });
             }catch(err){
                 console.error("Ошибка", err);
-                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',{
-                    reply_markup:{
-                        inline_keyboard:[
-                            [
-                                { text: '🏠 Главное меню', callback_data: 'main_menu' }
-                            ]
-                        ]
-                    }
-                });
+                await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',homeButton);
 
             }
 
@@ -282,15 +371,7 @@ bot.on("message", async (msg) => {
         }
     }catch(err){
         console.error("Ошибка", err);
-        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',{
-            reply_markup:{
-                inline_keyboard:[
-                    [
-                        { text: '🏠 Главное меню', callback_data: 'main_menu' }
-                    ]
-                ]
-            }
-        });
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',homeButton);
     }
 })
 
@@ -363,15 +444,7 @@ bot.on("callback_query", async (query) => {
         }
     }catch(err){
         console.error("Ошибка", err);
-        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',{
-            reply_markup:{
-                inline_keyboard:[
-                    [
-                        { text: '🏠 Главное меню', callback_data: 'main_menu' }
-                    ]
-                ]
-            }
-        });
+        await bot.sendMessage(chatId, '⚠️ Произошла ошибка. Попробуйте позже.',homeButton);
     }
 
     await bot.answerCallbackQuery(query.id, '✅ Готово');
