@@ -26,9 +26,25 @@ app.post('/webhook', (req, res) => {
 });
 
 app.use(cors({
-    origin: 'https://firstapp-xodb.onrender.com',
-    methods: ['POST', 'GET', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    origin: [
+        'https://firstapp-xodb.onrender.com',
+        'https://localhost:3000', // для локальной разработки
+        /^https:\/\/.*\.ngrok\.io$/, // старые ngrok домены
+        /^https:\/\/.*\.ngrok-free\.app$/ // новые ngrok домены
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+        'Accept',
+        'Accept-Version',
+        'Content-Length',
+        'Content-MD5',
+        'Content-Type',
+        'Date',
+        'X-Api-Version',
+        'Authorization',
+        'ngrok-skip-browser-warning' // для пропуска предупреждения ngrok
+    ],
+    credentials: false
 }));
 
 function validateInitData(initData, botToken) {
@@ -63,6 +79,58 @@ function parseInitData(initData) {
         chat: readJSON('chat')
     };
 }
+
+// Вместо двух запросов - один с JOIN
+app.get('/api/shop-data', async (req, res) => {
+    try {
+        console.log('API запрос начат');
+        const startTime = Date.now();
+
+        // Один оптимизированный запрос вместо двух
+        const query = `
+            SELECT 
+                c.id as category_id,
+                c.name as category_name,
+                c.image_path as category_icon,
+                COALESCE(
+                    json_agg(
+                        CASE WHEN p.id IS NOT NULL THEN
+                            json_build_object(
+                                'id', p.id,
+                                'name', p.name,
+                                'price', CASE WHEN p.price = 0 THEN '' ELSE p.price::text END,
+                                'image', p.image_path,
+                                'requiresPassword', p.requires_password
+                            )
+                        END
+                        ORDER BY p.name
+                    ) FILTER (WHERE p.id IS NOT NULL),
+                    '[]'::json
+                ) as products
+            FROM categories c
+            LEFT JOIN products p ON c.id = p.category_id
+            GROUP BY c.id, c.name, c.image_path
+            ORDER BY c.name
+        `;
+
+        const result = await pool.query(query);
+        console.log(`SQL выполнен за ${Date.now() - startTime}ms`);
+
+        const categories = result.rows.map(row => ({
+            id: row.category_id,
+            name: row.category_name,
+            icon: row.category_icon,
+            products: row.products || []
+        }));
+
+        res.json({ success: true, data: { categories } });
+        console.log(`Полный запрос: ${Date.now() - startTime}ms`);
+
+    } catch (error) {
+        console.error('Database error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 app.post('/api/submit', async (req, res) => {
     try {

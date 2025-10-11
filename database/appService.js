@@ -1,4 +1,5 @@
 const { query, pool } = require('./connection');
+const {text} = require("express");
 
 class AppService {
 
@@ -76,6 +77,34 @@ class AppService {
             return result.rows[0];
         } catch (error) {
             console.log(`⚠️ Ошибка удаления товара: ${id}`);
+            throw error;
+        }
+    }
+
+    static async getProducts(){
+        try{
+            return await pool.query(`
+          SELECT 
+            id, 
+            category_id, 
+            name, 
+            image_path as image,
+            CASE WHEN price = 0 THEN '' ELSE price::text END as price,
+            requires_password as "requiresPassword"
+          FROM products 
+          ORDER BY category_id, name
+        `);
+        }catch (error) {
+            console.log(`⚠️ Ошибка получения продуктов`);
+            throw error;
+        }
+    }
+
+    static async getCategories(){
+        try{
+            return await pool.query(`SELECT id, name, image_path as icon FROM categories ORDER BY name`);
+        }catch (error) {
+            console.log(`⚠️ Ошибка получения продуктов`);
             throw error;
         }
     }
