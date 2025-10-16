@@ -17,7 +17,7 @@ const express = require('express');
 
 const app = express();
 app.use(express.json());
-
+const ADMIN_IDS = process.env.ADMIN_IDS.split(',').map(id => parseInt(id, 10));
 
 // Webhook endpoint
 app.post('/webhook', (req, res) => {
@@ -81,56 +81,93 @@ function parseInitData(initData) {
 }
 
 // Вместо двух запросов - один с JOIN
-app.get('/api/shop-data', async (req, res) => {
+app.get(`/api/shop-data`, async (req, res) => {
     try {
-        console.log('API запрос начат');
-        const startTime = Date.now();
+        const initData =  req.query.initData;
+        if (typeof initData !== 'string') {
+            return res.status(400).json({ error: 'initData must be string' });
+        }
+        if (!validateInitData(initData, process.env.BOT_TOKEN)) {
+            return res.status(403).json({ error: 'Invalid initData' });
+        }
+        const { user, chat } = parseInitData(initData);
 
-        // Один оптимизированный запрос вместо двух
-        const query = `
-            SELECT 
-                c.id as category_id,
-                c.name as category_name,
-                c.image_path as category_icon,
-                COALESCE(
-                    json_agg(
-                        CASE WHEN p.id IS NOT NULL THEN
-                            json_build_object(
-                                'id', p.id,
-                                'name', p.name,
-                                'price', CASE WHEN p.price = 0 THEN '' ELSE p.price::text END,
-                                'image', p.image_path,
-                                'requiresPassword', p.requires_password
-                            )
-                        END
-                        ORDER BY p.name
-                    ) FILTER (WHERE p.id IS NOT NULL),
-                    '[]'::json
-                ) as products
-            FROM categories c
-            LEFT JOIN products p ON c.id = p.category_id
-            GROUP BY c.id, c.name, c.image_path
-            ORDER BY c.name
-        `;
-
-        const result = await pool.query(query);
-        console.log(`SQL выполнен за ${Date.now() - startTime}ms`);
-
-        const categories = result.rows.map(row => ({
+        const resultCat = await AppService.getProducts();
+        const resultOrd = await AppService.getOrdersByUserId(user.id);
+        const categories = resultCat.rows.map(row => ({
             id: row.category_id,
             name: row.category_name,
             icon: row.category_icon,
             products: row.products || []
         }));
-
-        res.json({ success: true, data: { categories } });
-        console.log(`Полный запрос: ${Date.now() - startTime}ms`);
-
+        res.json({ success: true, data: { categories: categories, orders: resultOrd } });
     } catch (error) {
         console.error('Database error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
+
+app.get('/api/order', async (req, res) => {
+    try {
+        const initData =  req.query.initData;
+        if (typeof initData !== 'string') {
+            return res.status(400).json({ error: 'initData must be string' });
+        }
+        if (!validateInitData(initData, process.env.BOT_TOKEN)) {
+            return res.status(403).json({ error: 'Invalid initData' });
+        }
+        const { user, chat } = parseInitData(initData);
+
+        const resultOrd = await AppService.getOrdersByUserId(user.id);
+
+        res.json({ success: true, data: { orders: resultOrd } });
+    } catch (error) {
+        console.error('Database error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+})
+
+app.post('/api/order', async (req, res) => {
+    try {
+        const { payload, initData } = req.body || {};
+
+        if (typeof initData !== 'string') {
+            return res.status(400).json({ error: 'initData must be string' });
+        }
+        if (!validateInitData(initData, process.env.BOT_TOKEN)) {
+            return res.status(403).json({ error: 'Invalid initData' });
+        }
+
+        const { user, chat } = parseInitData(initData);
+        const chatId = chat?.id ?? user?.id;
+
+        if (!chatId) return res.status(400).json({ error: 'chat_id not found' });
+        console.log(payload);
+        const order = {
+            order_id: crypto.randomUUID(),
+            user_id: user.id,
+            product_id: payload.product.id,
+            login: payload.login,
+            password: payload.password,
+            status: "inProcess",
+        }
+
+        const product = await AppService.getProductById(order.product_id);
+        const msg = "⚠️ Создан заказ\n```\n" + `Пользователь:\n\tTelegram id: ${user.id}\n\tUsername: ${user.first_name}\n\tDate: ${Date.now()}\n\nЗаказ №${order.order_id}\n\tКатегория: ${product.category_name}\n\tНазвание: ${product.product_name}` + "\n```";
+
+        if(payload.type === "addOrder"){
+            await AppService.addOrder(order);
+            ADMIN_IDS.forEach((e)=>{
+                bot.sendMessage(e, msg, {parse_mode: "MarkdownV2"});
+            })
+        }
+
+        return res.json({ ok: true, message: 'Заказ принят' });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+})
 
 app.post('/api/submit', async (req, res) => {
     try {
@@ -191,7 +228,7 @@ const webAppUrl = process.env.WEB_APP_URL;
 const webAppUrlAdmin = process.env.WEB_APP_URL_ADMIN;
 
 
-const ADMIN_IDS = process.env.ADMIN_IDS.split(',').map(id => parseInt(id, 10));
+
 
 const isAdmin = (userId) => ADMIN_IDS.includes(userId);
 const awaitingPhotoMailing = {};

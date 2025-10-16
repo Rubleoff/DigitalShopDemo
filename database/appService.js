@@ -84,18 +84,106 @@ class AppService {
     static async getProducts(){
         try{
             return await pool.query(`
-          SELECT 
-            id, 
-            category_id, 
-            name, 
-            image_path as image,
-            CASE WHEN price = 0 THEN '' ELSE price::text END as price,
-            requires_password as "requiresPassword"
-          FROM products 
-          ORDER BY category_id, name
+            SELECT 
+                c.id as category_id,
+                c.name as category_name,
+                c.image_path as category_icon,
+                COALESCE(
+                    json_agg(
+                        CASE WHEN p.id IS NOT NULL THEN
+                            json_build_object(
+                                'id', p.id,
+                                'name', p.name,
+                                'price', p.price,
+                                'image', p.image_path,
+                                'requiresPassword', p.requires_password
+                            )
+                        END
+                        ORDER BY p.name
+                    ) FILTER (WHERE p.id IS NOT NULL),
+                    '[]'::json
+                ) as products
+            FROM categories c
+            LEFT JOIN products p ON c.id = p.category_id
+            GROUP BY c.id, c.name, c.image_path
+            ORDER BY c.name
         `);
         }catch (error) {
             console.log(`⚠️ Ошибка получения продуктов`);
+            throw error;
+        }
+    }
+
+    static async getProductById(id){
+        try{
+            const sql =
+                `SELECT 
+                    p.id,
+                    p.name AS product_name,
+                    p.price,
+                    p.image_path,
+                    p.requires_password,
+                    c.name AS category_name
+                FROM products p
+                JOIN categories c ON p.category_id = c.id
+                WHERE p.id = $1;`;
+            const values = [id];
+
+            const result = await query(sql, values);
+            console.log(`✅ Продукт получен: ${JSON.stringify(result.rows[0], null, 2)}`);
+            return result.rows[0];
+        }catch (error) {
+            console.log(`⚠️ Ошибка получения продукта: ${id}`);
+            throw error;
+        }
+    }
+
+    static async addOrder(order){
+        await AppService.unsleepQuery();
+        const sql = `
+            INSERT INTO orders (order_id, user_id, product_id, login, password, status, order_opened)
+            VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+            RETURNING *;
+        `;
+
+        const values = [
+            order.order_id,
+            order.user_id,
+            order.product_id,
+            order.login,
+            order.password,
+            order.status,
+        ];
+
+        try {
+            const result = await query(sql, values);
+            console.log(`✅ Заказ создан: ${JSON.stringify(result.rows[0], null, 2)}`);
+            return result.rows[0];
+        } catch (error) {
+            console.log(`⚠️ Ошибка добавления заказа: ${order}`);
+            throw error;
+        }
+    }
+
+    static async getOrdersByUserId(userId){
+        try{
+            const sql = `SELECT
+                                         p.name,
+                                         p.price,
+                                         c.image_path AS image_path,
+                                         o.status,
+                                         o.order_opened,
+                                         o.order_closed
+                                     FROM orders o
+                                              JOIN products p ON o.product_id = p.id
+                                              JOIN categories c ON p.category_id = c.id
+                                     WHERE o.user_id = $1`;
+            const values = [userId]
+            const result = await query(sql, values);
+            console.log(result.rows);
+            return result.rows;
+        }catch (error) {
+            console.log(`⚠️ Ошибка получения заказов`);
             throw error;
         }
     }
